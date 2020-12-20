@@ -37,10 +37,10 @@ layer(l): 0         1           2        L-1         L
 where the arrows symbolize the tensors which are build during initialization. The init for the raw shape demands some parameters 
 
 1. layer topology L and neuron number for each layer which is achieved by a single python list of dimension L+1 (the 1 is the input layer).
-2. activation overlay -  a python list with same dimension L with the appropriate activation function
+2. activation overlay -  a python list with same dimension L with the corresponding activation function
 3. a name (optional) 
 
-With this parameters build a new pyron network by calling the Object `pyron.network` and initialize with the `pyron.network.new` method
+With these parameters build a new pyron network by calling the Object `pyron.network` and initialize with the `pyron.network.new` method
 ```python
 from pyron import network
 
@@ -62,4 +62,25 @@ The possible activation functions are
 <br>
 
 ### training
-pyron is trained with labeled data (supervised learning) and minimizes the loss function by a simple [batch, mini-batch or stochastic gradient decent](https://en.wikipedia.org/wiki/Gradient_descent#:~:text=Gradient%20descent%20is%20a%20first,the%20direction%20of%20steepest%20descent.) backpropagation algorithm. The training sample 
+pyron is trained with labeled data (supervised learning) and minimizes the loss function by a simple [batch, mini-batch or stochastic gradient decent](https://en.wikipedia.org/wiki/Gradient_descent#:~:text=Gradient%20descent%20is%20a%20first,the%20direction%20of%20steepest%20descent.) backpropagation algorithm. The training sample must be packaged accordingly
+
+```python
+sample = [[inputArray1, targetArray1], [inputArray2, targetArray2], ... ] 
+```
+
+recall that `inputArray` and `targetArray` must be ndarrays of dimension 10 and 4, respectively. Passing the data is now straightforward with the `pyron.network.train` method
+
+```python
+net.train(sample)
+```
+
+`network.train()` takes the following arguments
+ - <strong>sample</strong> : array of input and target arrays
+ - <strong>batchSize</strong>: number of (input, target)-pairs per propagated sample slice before backprop.
+ - <strong>epochs</strong>: number of total sample propagations
+ - <strong>verbose</strong>: for verbose printing during training
+ - <strong>error_plot</strong>: plots the loss function (mean-squared-error) over time when training is finished
+ - <strong>stop</strong>: loss function value after which to stop the training (default=0.0)
+ - <strong>learning_decay</strong>: learning rate decay exponential factor (default=0.0)
+ - <strong>learning_rate</strong>: learning rate (default=0.01)
+ - <strong>shuffle</strong>: shuffle the sample before every epoch (default=True)

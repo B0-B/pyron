@@ -343,7 +343,7 @@ class network:
         # --- Return demanded --- #
         return {'weights': overlays, 'biases': bias_overlays, 'loss': loss}
 
-    def train(self, sample, batchSize=1, epochs=1, verbose=False, error_plot=False, stop=0.0, learning_decay=0.0, learning_rate=None, adaptive=False, shuffle=True):
+    def train(self, sample, batchSize=1, epochs=1, verbose=False, error_plot=False, stop=0.0, learning_decay=0.0, learning_rate=None, shuffle=True):
 
         '''
         batchSize: if 1 then its stochastic gradient decent, if its equal len(sample) its batch g. d., everything else is mini-batch
@@ -435,7 +435,7 @@ class network:
                     break
 
                 # update learning rate
-                if adaptive:
+                if learning_decay != 0.0:
                     self.learningRate = learning / ( 1.0 + learning_decay * (batchSize*epoch + b) )
             
             if verbose:
