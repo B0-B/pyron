@@ -21,7 +21,7 @@ class network:
         self.error = 0
         self.name = ''
         
-    def new(self, topology=list(), name='new_network', activation_overlay=None): # works
+    def new(self, name='new_network', topology=list(), activation_overlay=None): # works
 
         '''
         The setup topology looks like
