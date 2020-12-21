@@ -3,6 +3,13 @@ import random, time
 import matplotlib.pyplot as plt
 import json
 
+class error:
+
+    def chi_squared(self, xarray, yarray):
+        delta = xarray - yarray
+        return delta.dot(delta) / xarray.shape[0]
+
+
 class network:
 
     def __init__(self):
@@ -240,11 +247,9 @@ class network:
 
             return z_exp / N
 
-    def loss(self, Output, Target): # works
-
-       delta = Output - Target
-       
-       return delta.dot(delta) / 2
+    def loss(self, Output, Target, model='chi_squared'): # works
+        if model == 'chi_squared':
+            return error.chi_squared(Output, Target)
 
     def nudge(self, layer, i, j=0, change=0, what='weights'):
 

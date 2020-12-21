@@ -50,7 +50,7 @@ net.new(
     topology=[10, 8, 8, 4], 
     activation_overlay=['id', 'relu', 'sigmoid', 'softmax'] )
 ```
-and was initialized with 4 layers including the input and output layers. By this instance the input must be an array of dimension 10 and is then propagated via two 8-dimensional layers and outputted in a 4 dimensional one i.e. the output is an ndarray of dimension (0, 4). Each layer 
+The net was initialized with 4 layers including the input and output layers. By this instance the input must be an array of dimension 10 and is then propagated via two 8-dimensional layers and outputted in a 4 dimensional one i.e. the output is an ndarray of dimension (0, 4). Each layer 
 obtains an appropriate activation function with which the output of each layer is convolved.
 The possible activation functions are
 
@@ -84,3 +84,21 @@ net.train(sample)
  - <strong>learning_decay</strong>: learning rate decay exponential factor (default=0.0)
  - <strong>learning_rate</strong>: learning rate (default=0.01)
  - <strong>shuffle</strong>: shuffle the sample before every epoch (default=True)
+
+<strong>Note</strong>: Many usecases in machine learning demand unique hyper parameters and it is crucial to pre-process the data like e.g. normalization or min-max-scaling, which will improve the learning efficiency significantly. The tuning of the parameters might take a few trainings so make sure to have the `error_plot` set to true to see the learning/loss curve after each training and to avoid overfitting.
+
+<br>
+
+### testing
+When a suitable loss is reached the freshly trained perceptron requires some test data to be propagated through. In order to mimick a real testsuite it is recommended to take `inputArrays` indifferent from the training sample. For a single forward propagation of one (input, target) pair the syntax might look like
+
+```python
+# test data sample
+inputArray = [x1, x2, ... , x10]
+targetArray = [y1, y2, ... , y4]
+
+# get a perceptron prediction 
+output = net.propagate(inputArray)
+
+# error of prediction
+```
