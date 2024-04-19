@@ -1,14 +1,13 @@
-
+#!/usr/bin/python3
+import sys, gc
 import numpy as np
-from numpy import array, float32
-from traceback import print_exc
 import random, time, json, math
+from traceback import print_exc
 import matplotlib.pyplot as plt
 from multiprocessing import Process
 from typing import Callable
 from pathlib import Path
 from threading import Thread
-import gc
 
 
 # Loss functions implemented as objects
@@ -95,6 +94,8 @@ class Network:
 
     def __init__(self) -> None:
         pass
+    
+    
 
 class FusedNetwork (Network):
 
@@ -102,15 +103,60 @@ class FusedNetwork (Network):
     Fused network type and corpus.
     '''
 
-    def __init__(self, lambda_instruction: Callable) -> None:
+    def __init__ (self) -> None:
 
         super().__init__()
-        self.lambda_instruction = lambda_instruction
 
-    def forward (self, _input: np.ndarray):
+        self.L = None
+        self.w = []
+        self.b = []
+        self.a = []
 
-        return self.lambda_instruction ( _input )
+    def forward (self, _input: np.ndarray) -> np.ndarray:
 
+        '''
+        Simple forward propagation wrapper.
+        '''
+
+        v = _input
+        for l in range(self.L):
+            v = activate(self.w[l] @ v + self.b[l], model=self.a[l])
+        return v
+    
+    def load_format_string (format_string_function: str) -> "FusedNetwork":
+
+        '''
+        Loads a functional format_str and evaluates as one fused function.
+        This method is used in the backend of pyron.fuse function.
+
+        Example:
+            format_str = "np.array([1,3,2]) @ _input" <- _input is the input variable
+
+        The function will be held in the object's cache for fast forward propagation.
+        '''
+
+        fn = FusedNetwork()
+        fn.fused_lambda_model = lambda _input: eval( format_string_function )
+
+        return fn
+    
+    def load_from_model (model: Network, float_precision: type=np.float64) -> "FusedNetwork":
+
+        '''
+        Returns a fused version of provided Network-like e.g CNN model.
+        '''
+
+        fn = FusedNetwork()
+
+        for l in range(1, model.L + 1):
+
+            fn.w.append ( model.tensors[l].astype(float_precision) )
+            fn.b.append( model.biases[l].astype(float_precision) )
+        
+        fn.L = model.L
+        fn.a = model.activation_overlay
+
+        return fn
 
 class CNN (Network):
 
@@ -133,6 +179,7 @@ class CNN (Network):
         self.name = '',
 
         # geometry and specs
+        self.activation_overlay = []
         self.L = 0
         self.topology = []
         self.parameters = 0
@@ -799,6 +846,86 @@ class Loader:
 
         return reconstructed
 
+
+# ---- global methods ----
+def activate (x: np.ndarray|float, derivative: bool=False, model: str='sigmoid') -> np.ndarray|float: # works
+
+    '''
+    Standalone activate function.
+    model       linear, sigmoid, relu, softmax
+    '''
+
+    # Sigmoid or logistics function
+    # https://en.wikipedia.org/wiki/Sigmoid_function
+    if model == 'sigmoid':
+
+        sig = lambda x: 1 / ( 1 + np.exp(-x) )
+
+        if derivative:
+
+            return sig(x) * (1 - sig(x))
+
+        return sig(x)
+    
+    # ReLU activation function
+    # https://en.wikipedia.org/wiki/Rectifier_(neural_networks)
+    elif model == 'relu':
+
+        if type(x) == np.ndarray or type(x) == list:
+
+            out = np.maximum(0, x)  # Apply ReLU element-wise
+
+            if derivative:
+                out[x <= 0] = 0  # Derivative of ReLU
+                out[x > 0] = 1
+                
+            return out
+
+    # Identical function, will simply return the input
+    elif model == 'linear':
+
+        if derivative:
+            
+            if type(x) == np.ndarray or type(x) == list:
+
+                return np.ones(x.shape)
+            
+            return 1.
+        
+        return x
+    
+    # Softmax activation normalized and boltzmann-weighted to fulfill probability condition.
+    # https://en.wikipedia.org/wiki/Softmax_function
+    elif model == 'softmax':
+
+        boltzman_factor = np.exp( x )
+        
+        if len(x.shape) > 1:
+            # activate linear prediction with softmax
+            
+            dist = (boltzman_factor.T / np.sum(boltzman_factor, axis=1)).T
+        
+        else:
+
+            dist = (boltzman_factor / np.sum(boltzman_factor)) 
+
+
+        if derivative:
+
+            # Compute the outer product of the softmax vector with itself
+            outer = np.einsum('ij,ik->ijk', dist, dist)
+
+            # Create a 3D diagonal matrix with the softmax values on the diagonals
+            diag = np.einsum('ij,jk->ijk', dist, np.eye(dist.shape[1]))
+
+            # Subtract the outer product from the diagonal matrix
+            jacobian_m = diag - outer
+
+            # Compute the determinant of each 2D matrix in the 3D stack
+            return jacobian_m
+
+        return dist
+
 def forward_activation_str_wrapper (model: str='relu') -> str:
 
     if model == 'linear':
@@ -817,32 +944,44 @@ def forward_activation_str_wrapper (model: str='relu') -> str:
 
         return "np.exp({0}) / np.sum(np.exp({0}))"
 
-
-def fuse (model: Network, float_precision: type=np.float64) -> FusedNetwork:
+def fuse (model: Network, float_precision: type=np.float64, save_filepath: str|Path|None=None) -> FusedNetwork:
 
     '''
     Fuses a model for performant inference.
     All layers will be hard-coded 'fused' to one single function for faster propagation.
     Also the model can be fused at different pecisions for compression. 
+
+    save_filepath       The absolute target filename e.g. /../myfolder/myfilename 
+                        this will create a file -> /../myfolder/myfilename.fuse
     '''
 
+    # fuse the network weights, biases and activation to a single formula
     vec = '_input'
-
     for layer in range(1, model.L+1):
-
-        # compute the raw layer output
-        raw_layer_output = f"np.array({list(model.tensors[layer].astype(float_precision))}) @ ({vec} + np.array({list(model.biases[layer])}))"
+        raw_layer_output = f"((np.array({list(model.tensors[layer].astype(float_precision))}) @ {vec}) + np.array({list(model.biases[layer].astype(float_precision))}))"
         activation_overlay = forward_activation_str_wrapper(model.activation_overlay[layer])
-        activated_layer_output = activation_overlay.format(raw_layer_output)
+        activated_layer_output = '(' + activation_overlay.format(raw_layer_output) + ')'
         vec = activated_layer_output
 
-    vec = vec.replace('float', 'np.float')
-    print(vec)
+    # convert objects to correct numpy reference
+    string_formula = vec.replace('float', 'np.float')
+    #print(vec)
+
+    # save the formula string, which at any point can be read and load again into python via eval() function
+    if save_filepath:
+        if save_filepath.is_dir():
+            raise ValueError(f'[error]: save_filepath argument in fuse method must point to a filename not an existing directory!')
+        if save_filepath.suffix != '.fuse':
+            save_filepath.suffix = '.fuse'
+        with open(save_filepath, 'w+') as f:
+            f.write(string_formula)
+        print('[fuse]: saved model.')
     
+    # create a fused lambda function
+    # fused = lambda _input: eval(string_formula)
+    # print('fused result', fused (np.random.uniform(-1, 1, (model.topology[0],))))
 
-    fused = lambda _input: eval(vec)
-    print('fused result', fused (np.random.uniform(-1, 1, (model.topology[0],))))
-
+    return FusedNetwork.load_format_string(string_formula)
 
 def clone_training (model: Network, samples: list[list[np.ndarray]], clone_number: int=1):
 
@@ -863,3 +1002,41 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
             samples,
 
         ))
+
+def size (tensor: np.ndarray, individual_element_size: bool=False, verbose: bool=False) -> int:
+
+    '''
+    Returns the size of provided tensor in 
+
+    bytes       if individual_element_size=False
+    bits        if individual_element_size=True as 
+                it will return the single element size
+                which equals the dtype
+    '''
+
+    precision = tensor.dtype
+    
+    empty_shape = []
+    for i in range(len(tensor.shape)):
+        empty_shape.append(tensor.shape[i])
+    empty_shape[-1] = 0
+    empty = np.empty(empty_shape) # empty 
+
+    # count the parameters by multiplying dimensions
+    parameters = 1
+    for d in range(len(tensor.shape)):
+        parameters *= tensor.shape[d]
+
+    size_empty = sys.getsizeof(empty)
+    size = sys.getsizeof(tensor)
+    stored_size = size - size_empty
+
+    if verbose:
+        print(f'size {precision} empty', size_empty, 'bytes')
+        print(f'size {precision}', size, 'bytes')
+        print(f'size storage {precision}', stored_size, 'bytes')
+        print(f'storage size per element', int(stored_size / parameters * 8), 'bit')
+    
+    if individual_element_size:
+        return stored_size
+    return size
