@@ -1,0 +1,9 @@
+{
+    "name" : "pyron",
+    "version" : "1.0",
+    "author" : "alch3mist",
+    "author_email" : "alch3mist94@protonmail.com",
+    "description" : "Simple Perceptron Framework.",
+    "licence" : "MIT",
+    "url": ""
+}
