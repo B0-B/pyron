@@ -4,32 +4,14 @@ sys.path.append('./..')
 import os
 from PIL import Image
 import numpy as np
-from pyron import CNN, CrossEntropyLoss
+from pyron import CNN, CrossEntropyLoss, Loader
 from pathlib import Path
 
-# a data set of 20 x 20 px images
+# locate a data set of 20 x 20 px images
 datasetPath = Path(__file__).resolve().parent.joinpath('numbersDataset/')
 
-# load dataset
-dataset = []
-
-for file in os.listdir(datasetPath):
-
-    if file.endswith(".png"):
-
-        filePath = os.path.join(datasetPath, file)
-        im_frame = Image.open(filePath)
-
-        # pixel array, each value is in [0,100]
-        # normalize 0-100 to 0-1 (Min Max Scaling).
-        x_vector = np.array(im_frame.getdata()) / 100
-
-        # label or "y" value
-        label = int(filePath.split('\\')[-1].split('_')[1])
-        y_vector = np.zeros((10,))
-        y_vector[label] = 1.
-
-        dataset.append([x_vector, y_vector])
+# load image dataset
+dataset = Loader.load_image_data(datasetPath, suffix='.png')
 
 
 nn = CNN()
