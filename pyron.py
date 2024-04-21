@@ -1,13 +1,45 @@
 #!/usr/bin/python3
-import sys, gc
+
+import os, sys, gc
+
+# scientific libraries
 import numpy as np
-import random, time, json, math
+from math import isnan
+
 from traceback import print_exc
 import matplotlib.pyplot as plt
-from multiprocessing import Process
+from threading import Thread, Event
+from time import sleep
 from typing import Callable
 from pathlib import Path
-from threading import Thread
+from PIL import Image
+
+class thread (Thread):
+
+    '''
+    [MODULE]
+
+    The activity of this thread is bound to the termination state of the controller.
+    '''
+
+    def __init__ (self, function: Callable, *args, **kwargs) -> None:
+
+        Thread.__init__(self)
+        self.func = function
+        self.args = args
+        self.kwargs = kwargs
+        self.stoprequest = Event()
+        self.finished = False
+
+    def run (self) -> None:
+
+        self.func(*self.args, **self.kwargs)
+        self.finished = True
+
+    def stop (self, timeout = None):
+
+        self.stoprequest.set()
+        super(thread, self).join(timeout)
 
 
 # Loss functions implemented as objects
@@ -95,8 +127,6 @@ class Network:
     def __init__(self) -> None:
         pass
     
-    
-
 class FusedNetwork (Network):
 
     '''
@@ -120,7 +150,7 @@ class FusedNetwork (Network):
 
         v = _input
         for l in range(self.L):
-            v = activate(self.w[l] @ v + self.b[l], model=self.a[l])
+            v = activate(self.w[l] @ v + self.b[l], model=self.a[l+1])
         return v
     
     def load_format_string (format_string_function: str) -> "FusedNetwork":
@@ -144,6 +174,7 @@ class FusedNetwork (Network):
 
         '''
         Returns a fused version of provided Network-like e.g CNN model.
+        Note: On 64-bit systems float32 will be up to 10 times slower than float64.
         '''
 
         fn = FusedNetwork()
@@ -158,6 +189,18 @@ class FusedNetwork (Network):
 
         return fn
 
+    def size (self):
+
+        '''
+        Alias of global size method, applied to inner parameters.
+        '''
+
+        s = 0
+        for layer in range(self.L):
+            s += size(self.w[layer]) + size(self.b[layer])
+        
+        return s
+    
 class CNN (Network):
 
     '''
@@ -198,6 +241,8 @@ class CNN (Network):
         self.biases = {}
         
         self.default_activation = 'sigmoid'
+
+        self.accuracy = None
         
     def sequential (self, name: str='new_network', topology: list=[], activation_overlay: list[str]|None=None): # works
 
@@ -630,7 +675,7 @@ class CNN (Network):
                         backprop_result = self.backprop(x_batch, y_batch, evaluation_criterion=evaluation_criterion)
 
                         # check if loss is divergent
-                        if f'{backprop_result["loss"]}'.lower() == 'nan' or np.isnan(backprop_result["loss"]) or math.isnan(backprop_result["loss"]):
+                        if f'{backprop_result["loss"]}'.lower() == 'nan' or np.isnan(backprop_result["loss"]) or isnan(backprop_result["loss"]):
                             print('[fitting]: the fit diverged to infinity which lead to an undefined cost value. To resolve this issue it could be helpful to take smaller learning rates.\nStop fitting.')
                             _diverged = True
                             break
@@ -713,6 +758,7 @@ class CNN (Network):
 
             # denote fit information in a label
             self.fit_label = fit_information
+            self.accuracy = accuracy
                 
             return fit_information
 
@@ -829,6 +875,25 @@ class CNN (Network):
         # --- Return demanded --- #
         return {'weights': self.weight_gradients, 'biases': self.bias_gradients, 'loss': loss}
     
+    def size (self):
+
+        '''
+        Alias of global size method, applied to inner parameters.
+
+        Returns the size of provided tensor in 
+
+        bytes       if individual_element_size=False
+        bits        if individual_element_size=True as 
+                    it will return the single element size
+                    which equals the dtype
+        '''
+
+        s = 0
+        for layer in range(1, self.L + 1):
+            s += size(self.tensors[layer]) + size(self.biases[layer])
+        
+        return s
+
 class Loader:
 
     '''
@@ -846,6 +911,58 @@ class Loader:
 
         return reconstructed
 
+    def load_image_data (dirpath: str|Path, suffix: str='', class_string_separator: str='_', separator_index: int=1, 
+                         one_hot_encoded: bool=True, normalize: bool=True, color_band: int=0) -> list[list[np.ndarray, np.ndarray]]:
+
+        '''
+        Loads images into pyron-compliant format 
+        i.e. -> [[x_array_input_1, x_array_output_1], [x_array_input_2, x_array_output_2], ...]
+        by flattening the pixel values onto a 1D input vector. 
+
+        The output vector, which is one-hot encoded, will be drawn from the file name. For this the
+        digit is parsed from the filename by seprators (default '_')
+        e.g. c_0_id16.png -> class 0
+
+        Provide suffix e.g. '.png' for correct file type filtering.
+
+        Returns a sample dataset.
+        '''
+
+        if type(dirpath) is str:
+            dirpath = Path(dirpath)
+
+        # load dataset
+        dataset = []
+        files = [entry for entry in dirpath.iterdir()]
+
+        for file in files:
+
+            if suffix and file.suffix != suffix:
+                continue
+
+            # filePath = os.path.join(dirpath, file)
+            filePath = dirpath.joinpath(file)
+            im_frame = Image.open(filePath)
+
+            x_vector = np.array(im_frame.getdata(color_band))
+
+            # pixel array, each value is in [0,100]
+            # normalize 0-100 to 0-1 (Min Max Scaling).
+            if normalize:
+                x_vector = x_vector / 100
+
+            # extract label or "y" value from filename
+            if one_hot_encoded:
+                label = int(filePath.name.split(class_string_separator)[separator_index])
+                y_vector = np.zeros((10,))
+                y_vector[label] = 1.
+            else:
+                # otherwise return 0-dim. integer labels
+                y_vector = np.array([label])
+
+            dataset.append([x_vector, y_vector])
+        
+        return dataset
 
 # ---- global methods ----
 def activate (x: np.ndarray|float, derivative: bool=False, model: str='sigmoid') -> np.ndarray|float: # works
@@ -947,9 +1064,12 @@ def forward_activation_str_wrapper (model: str='relu') -> str:
 def fuse (model: Network, float_precision: type=np.float64, save_filepath: str|Path|None=None) -> FusedNetwork:
 
     '''
+    [Deprecated - failed tests]
     Fuses a model for performant inference.
     All layers will be hard-coded 'fused' to one single function for faster propagation.
     Also the model can be fused at different pecisions for compression. 
+
+    Note: On 64-bit systems float32 will be up to 10 times slower than float64.
 
     save_filepath       The absolute target filename e.g. /../myfolder/myfilename 
                         this will create a file -> /../myfolder/myfilename.fuse
@@ -983,35 +1103,103 @@ def fuse (model: Network, float_precision: type=np.float64, save_filepath: str|P
 
     return FusedNetwork.load_format_string(string_formula)
 
-def clone_training (model: Network, samples: list[list[np.ndarray]], clone_number: int=1):
+def clone_training (model: Network, samples: list[list[np.ndarray]], clone_number: int=1, batch_size: int=1, epochs: int=1, verbose: bool=False, 
+            error_plot: bool=False, stop: float=0.0, learning_decay: float=0.0, learning_rate: float=None, shuffle: bool=True, 
+            evaluation_criterion: Callable=MeanSquaredError(), split: float|None=None, epoch_callback: Callable|None=None):
 
-    clones = [model for i in range(clone_number)]
-    processes = []
+    '''
+    Clone training - a random forrest approach.
+    '''
 
-    
-    for clone in clones:
+    # 0. Instantiate a model for every clone of the g clones.
+    g = clone_number
+    clones, threads = [model for i in range(g)], []
+
+    # 1. Shuffle the set to ensure homogeneous and thus uniform distrbution in all subsets.
+    np.random.shuffle(samples)
+
+    # 2. Split samples to g equally sized samples.
+    sample_size = len( samples )
+    split_size = int( sample_size / g )
+    clone_samples = [samples[i*split_size:(i+1)*split_size] for i in range(g)]
+
+    # test
+    # for clone_sample in clone_samples:
+    #     print(len(clone_sample))
+
+    # 3. Pass a split set to each clone for parallelized training
+    print(f'[clone training]: train {g} independent clones over {epochs} epochs, this may take a while ...')
+    for i in range(g):
 
         # initialize each clone independently
-        clone.initialize('uniform',
+        clones[i].initialize(
+            'uniform',
             weight_range=[-.3, .3],
-            bias_range=[-.3, .3])
+            bias_range=[-.3, .3]
+        )
+
+        # wrap the thread in a lambda call
+        training_thread = lambda : clones[i].fit(
+            clone_samples[i],
+            batch_size=batch_size,
+            epochs=epochs,
+            verbose=False,
+            error_plot=False,
+            stop=stop,
+            learning_decay=learning_decay,
+            learning_rate=learning_rate,
+            shuffle=shuffle,
+            evaluation_criterion=evaluation_criterion,
+            split=split,
+            epoch_callback=epoch_callback
+        )
+
+        # train each clone in a separate thread with one of the splitted samples
+        # (this is a simulation to g separate GPUs)
+        prc = thread(function=training_thread)
+
+        # store and start
+        threads.append(prc)
+        prc.start()
     
+    # await all threads
+    for t in threads:
+        while not t.finished:
+            sleep(.1)
 
-        # train each clone in a separate thread
-        prc = Process(target=clone.fit(
-            samples,
+    # 4. Extract weighting from the corresponding losses
+    if split:
+        loss_dist = np.array([clone.accuracy for clone in clones])
+        loss_weights = activate(loss_dist, model='softmax')
+    else:
+        loss_weights = np.ones((len(clones),))
 
-        ))
+    # 5. Merge all weights by sample mean into a new model corpus.
+    corpus = CNN()
+    corpus.sequential(
+        model.name,
+        model.topology,
+        model.activation_overlay
+    )
+
+    # take the loss-weighted mean of all weights and biases
+    # i.e. clones which performed better will be taken more into account
+    for clone in clones:
+        for layer in range(1, model.L+1):
+            corpus.tensors[layer] += loss_weights[layer-1] * clone.tensors[layer] / g
+            corpus.biases[layer] += loss_weights[layer-1] * clone.biases[layer] / g
+
+    return corpus
 
 def size (tensor: np.ndarray, individual_element_size: bool=False, verbose: bool=False) -> int:
 
     '''
     Returns the size of provided tensor in 
 
-    bytes       if individual_element_size=False
-    bits        if individual_element_size=True as 
-                it will return the single element size
-                which equals the dtype
+        bytes       if individual_element_size=False
+        bits        if individual_element_size=True as 
+                    it will return the single element size
+                    which equals the dtype
     '''
 
     precision = tensor.dtype
