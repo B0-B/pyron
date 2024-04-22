@@ -1,0 +1,126 @@
+<!-- A UI to quickly and efficiently generate handwritten digits. -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HWDD-20 Generator</title>
+    <style>
+        body {
+            background: #383838;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        #canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+        }
+        canvas {
+            border: 2px solid black;
+            display: block;
+            width: 100%;
+        }
+        #thickness-slider {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <canvas id="myCanvas" width="20" height="20"></canvas>
+        <input type="number" id="imageId" placeholder="Enter ID">
+        <input type="number" id="additionalNumber" placeholder="0-9">
+        <select id="lineCapSelect">
+            <option value="round">Round</option>
+            <option value="square">Square</option>
+        </select>
+        <button onclick="saveImage()">Save as PNG</button>
+        <input type="range" id="thickness-slider" min="1" max="10" value="1" step="1">
+    </div>
+
+    <script>
+        const canvas = document.getElementById("myCanvas");
+        const ctx = canvas.getContext("2d");
+        const scale = 20 / canvas.getBoundingClientRect().left
+        let isDrawing = false;
+        let penThickness = 1;
+
+        // Initialize canvas
+        function initCanvas() {
+            canvas.addEventListener("mousedown", startDrawing);
+            canvas.addEventListener("mousemove", draw);
+            canvas.addEventListener("mouseup", stopDrawing);
+            canvas.addEventListener("mouseout", stopDrawing);
+            clean()
+        }
+
+        // Start drawing
+        function startDrawing(event) {
+            isDrawing = true;
+            const x = 20 * ( event.clientX - canvas.getBoundingClientRect().left ) / canvas.clientWidth;
+            const y = 20 * ( event.clientY - canvas.getBoundingClientRect().top ) / canvas.clientHeight;
+
+            console.log(x,y,event.clientX)
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        // Draw on canvas
+        function draw(event) {
+            if (!isDrawing) return;
+            const x = 20 * ( event.clientX - canvas.getBoundingClientRect().left ) / canvas.clientWidth;
+            const y = 20 * ( event.clientY - canvas.getBoundingClientRect().top ) / canvas.clientHeight;
+            ctx.lineWidth = penThickness;
+            ctx.lineCap = document.getElementById("lineCapSelect").value;
+            ctx.lineTo(x, y);
+            ctx.stroke();
+        }
+
+        // Stop drawing
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
+        // Save canvas as PNG
+        function saveImage() {
+            const imageId = document.getElementById("imageId").value;
+            const additionalNumber = document.getElementById("additionalNumber").value;
+            const dataURL = canvas.toDataURL("image/png");
+            const link = document.createElement("a");
+            link.href = dataURL;
+            link.download = `n_${additionalNumber}_id_${imageId}.png`;
+            link.click();
+
+            // update image id
+            document.getElementById("imageId").value = parseInt(imageId) + 1
+            clean()
+            
+        }
+
+        function clean() {
+            // Clear the canvas after saving
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Update pen thickness based on slider value
+        document.getElementById("thickness-slider").addEventListener("input", function() {
+            penThickness = this.value;
+        });
+
+        document.addEventListener("keydown", function(event) {
+            if (event.key === "s") {
+                saveImage();
+            }
+        });
+
+        initCanvas();
+    </script>
+</body>
+</html>

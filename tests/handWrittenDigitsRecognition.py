@@ -8,7 +8,7 @@ from pyron import CNN, CrossEntropyLoss, Loader
 from pathlib import Path
 
 # locate a data set of 20 x 20 px images
-datasetPath = Path(__file__).resolve().parent.joinpath('numbersDataset/')
+datasetPath = Path(__file__).resolve().parent.joinpath('hwdd-20/dataset/')
 
 # load image dataset
 dataset = Loader.load_image_data(datasetPath, suffix='.png')

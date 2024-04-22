@@ -4,10 +4,12 @@ import os, sys, gc
 
 # scientific libraries
 import numpy as np
+import matplotlib.pyplot as plt
 from math import isnan
 
+import copy
+
 from traceback import print_exc
-import matplotlib.pyplot as plt
 from threading import Thread, Event
 from time import sleep
 from typing import Callable
@@ -43,7 +45,10 @@ class thread (Thread):
 
 
 # Loss functions implemented as objects
-class CrossEntropyLoss:
+class Criterion:
+    pass
+
+class CrossEntropyLoss (Criterion):
 
     '''
     Categorical Cross Entropy loss or "log" loss 
@@ -104,7 +109,7 @@ class CrossEntropyLoss:
         else:
             return - ( log_q * yarray ).sum(1).mean()
 
-class MeanSquaredError:
+class MeanSquaredError (Criterion):
 
     '''
     MSE - Mean Squared Error
@@ -216,6 +221,7 @@ class CNN (Network):
     def __init__ (self):
 
         super().__init__()
+        self.initialized: bool=False
 
         # general information
         self.fit_label = {}
@@ -324,6 +330,8 @@ class CNN (Network):
 
                 elif 'norm' in method:
                     self.biases[layer][i] = np.random.normal(mean_bias, var_bias)
+
+        self.initialized = True
 
     def load (self, filepath: str|Path) -> None:
 
@@ -595,9 +603,10 @@ class CNN (Network):
             else:
                 self.biases[layer][i] = self.biases[layer][i] + change
 
-    def fit (self, samples: list[list[np.ndarray]], batch_size: int=1, epochs: int=1, verbose: bool=False, 
-            error_plot: bool=False, stop: float=0.0, learning_decay: float=0.0, 
-            learning_rate: float=None, shuffle: bool=True, evaluation_criterion: Callable=MeanSquaredError(), split: float|None=None, epoch_callback: Callable|None=None) -> dict[str, any]:
+    def fit (self, samples: list[list[np.ndarray, np.ndarray]], batch_size: int=1, epochs: int=1, verbose: bool=False, 
+            error_plot: bool=False, stop: float=0.0, learning_decay: float=0.0, learning_rate: float=None, shuffle: bool=True, 
+            evaluation_criterion: Criterion=MeanSquaredError(), split: float|None=None, test_samples: list[list[np.ndarray, np.ndarray]]|None=None, 
+            epoch_callback: Callable|None=None) -> dict[str, any]:
             
             '''
             Main fully-customizable fitting method.
@@ -631,7 +640,7 @@ class CNN (Network):
             else:
                 training_size = samples_size
                 test_size = 0
-                training_samples = np.array(samples)
+                training_samples = samples
             
             # compute number of batches formable
             if batch_size == 1:
@@ -729,13 +738,14 @@ class CNN (Network):
                 gc.collect()
 
             # testing 
-            if split:
-                successes = 0
-                for s in test_samples:
-                    # make a maximum likelihood prediction
-                    if np.argmax(s[1]) == np.argmax(self.propagate(s[0])):
-                        successes += 1
-                accuracy = np.round(100 * successes / test_size, 2)
+            if test_samples:
+                accuracy = self.test(test_samples, mode='argmax')
+                # successes = 0
+                # for s in test_samples:
+                #     # make a maximum likelihood prediction
+                #     if np.argmax(s[1]) == np.argmax(self.propagate(s[0])):
+                #         successes += 1
+                # accuracy = np.round(100 * successes / test_size, 2)
                 print(f'[testing]: categorization accuracy: {accuracy}%')
             
             # plot loss function for analysis
@@ -894,6 +904,38 @@ class CNN (Network):
         
         return s
 
+    def test (self, samples: list[list[np.ndarray, np.ndarray]], mode: str='argmax', threshold: float=0) -> float:
+
+        '''
+        Returns the prediction accuracy.
+
+        mode        argmax - for categorization e.g. one-hot encoded distribution outputs
+                    distance - magnitude distance (also provide threshold argument)
+                    mse - mean squared distance (also provide threshold argument)
+                    loss - avg. loss per sample (also provide loss function)
+
+        '''
+
+        successes = 0
+
+        for s in samples:
+            # make a maximum likelihood prediction
+            if mode == 'argmax':
+                if np.argmax(s[1]) == np.argmax(self.propagate(s[0])):
+                    successes += 1
+            elif mode == 'distance':
+                if np.abs(s[1] - s[0]).sum() < threshold:
+                    successes += 1
+            elif mode == 'mse':
+                if ((s[1] - s[0])**2).mean() < threshold:
+                    successes += 1
+            
+        accuracy = np.round(100 * successes / len(samples), 2)
+
+        return accuracy
+
+
+
 class Loader:
 
     '''
@@ -912,7 +954,7 @@ class Loader:
         return reconstructed
 
     def load_image_data (dirpath: str|Path, suffix: str='', class_string_separator: str='_', separator_index: int=1, 
-                         one_hot_encoded: bool=True, normalize: bool=True, color_band: int=0) -> list[list[np.ndarray, np.ndarray]]:
+                         one_hot_encoded: bool=True, normalize: bool=True, color_band: int|None=None, rectify_mixed_background: bool=False, invert: bool=False) -> list[list[np.ndarray, np.ndarray]]:
 
         '''
         Loads images into pyron-compliant format 
@@ -943,13 +985,18 @@ class Loader:
             # filePath = os.path.join(dirpath, file)
             filePath = dirpath.joinpath(file)
             im_frame = Image.open(filePath)
-
             x_vector = np.array(im_frame.getdata(color_band))
 
             # pixel array, each value is in [0,100]
             # normalize 0-100 to 0-1 (Min Max Scaling).
             if normalize:
-                x_vector = x_vector / 100
+                x_vector = x_vector / np.max(x_vector)
+
+            # invert colors
+            if rectify_mixed_background and x_vector.mean() > 0.5:
+                x_vector = 1 - x_vector
+            if invert:
+                x_vector = 1 - x_vector
 
             # extract label or "y" value from filename
             if one_hot_encoded:
@@ -1103,9 +1150,10 @@ def fuse (model: Network, float_precision: type=np.float64, save_filepath: str|P
 
     return FusedNetwork.load_format_string(string_formula)
 
-def clone_training (model: Network, samples: list[list[np.ndarray]], clone_number: int=1, batch_size: int=1, epochs: int=1, verbose: bool=False, 
-            error_plot: bool=False, stop: float=0.0, learning_decay: float=0.0, learning_rate: float=None, shuffle: bool=True, 
-            evaluation_criterion: Callable=MeanSquaredError(), split: float|None=None, epoch_callback: Callable|None=None):
+def clone_training (model: Network, samples: list[list[np.ndarray]], clone_number: int=1, batch_size: int=1, epochs: int=1, stop: float=0.0, 
+            learning_decay: float=0.0, learning_rate: float=None, shuffle: bool=True, evaluation_criterion: Callable=MeanSquaredError(), 
+            split: float|None=None, epoch_callback: Callable|None=None, loss_weighting: bool=False,
+            init_method:str='random', weight_range: list=[-.1, .1], bias_range: list=[-.1, .1], mean_weight:float=0, var_weight:float=0, mean_bias:float=0, var_bias:float=0):
 
     '''
     Clone training - a random forrest approach.
@@ -1113,7 +1161,7 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
 
     # 0. Instantiate a model for every clone of the g clones.
     g = clone_number
-    clones, threads = [model for i in range(g)], []
+    clones, threads = [copy.deepcopy(model) for _ in range(g)], []
 
     # 1. Shuffle the set to ensure homogeneous and thus uniform distrbution in all subsets.
     np.random.shuffle(samples)
@@ -1132,11 +1180,7 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
     for i in range(g):
 
         # initialize each clone independently
-        clones[i].initialize(
-            'uniform',
-            weight_range=[-.3, .3],
-            bias_range=[-.3, .3]
-        )
+        clones[i].initialize(init_method, weight_range, bias_range, mean_weight, var_weight, mean_bias, var_bias)
 
         # wrap the thread in a lambda call
         training_thread = lambda : clones[i].fit(
@@ -1167,8 +1211,10 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
         while not t.finished:
             sleep(.1)
 
+    
+
     # 4. Extract weighting from the corresponding losses
-    if split:
+    if split and loss_weighting:
         loss_dist = np.array([clone.accuracy for clone in clones])
         loss_weights = activate(loss_dist, model='softmax')
     else:
@@ -1186,9 +1232,10 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
     # i.e. clones which performed better will be taken more into account
     for clone in clones:
         for layer in range(1, model.L+1):
+            print('clone weight snip out - ', clone.tensors[layer][0][:3]) if layer == 3 else None
             corpus.tensors[layer] += loss_weights[layer-1] * clone.tensors[layer] / g
             corpus.biases[layer] += loss_weights[layer-1] * clone.biases[layer] / g
-
+    print('merged corpus snip out - ', corpus.tensors[3][0][:3]) 
     return corpus
 
 def size (tensor: np.ndarray, individual_element_size: bool=False, verbose: bool=False) -> int:

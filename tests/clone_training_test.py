@@ -10,8 +10,8 @@ from pyron import CNN, CrossEntropyLoss, FusedNetwork, Loader, clone_training
 def testsuite() -> bool:
 
     # locate digit dataset of 20 x 20 px images
-    datasetPath = Path(__file__).resolve().parent.joinpath('numbersDataset/')
-    dataset = Loader.load_image_data(datasetPath, suffix='.png')
+    datasetPath = Path(__file__).resolve().parent.joinpath('hwdd-20/dataset/')
+    dataset = Loader.load_image_data(datasetPath, suffix='.png', color_band=0, invert=True)
 
     split = 0.8
     split_index = int(split*len(dataset))
@@ -30,7 +30,7 @@ def testsuite() -> bool:
         'clone_number': 4,
         'batch_size': 3,
         'epochs': 100,
-        'learning_rate': 0.01,
+        'learning_rate': 0.02,
         'split': 0.8,
         'init_method': 'random', 
         'weight_range': [-.1, .1], 
@@ -44,7 +44,7 @@ def testsuite() -> bool:
     # start the training
     merged_model = clone_training(master, training_set, **hyperparameters)
 
-    merged_accuracy = merged_model.test(training_set, mode='argmax')
+    merged_accuracy = merged_model.test(test_set, mode='argmax')
     print(f'[testing]: merged model categorization accuracy: {merged_accuracy}%')
 
     return True
