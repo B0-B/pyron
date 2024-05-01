@@ -612,11 +612,20 @@ class CNN (Network):
             Main fully-customizable fitting method.
 
             batchSize               if 1 then its stochastic gradient decent, if its equal len(sample) its batch g. d., everything else is mini-batch
+            eochs                   Number of training epochs.
+            verbose                 verbose training output.
+            error_plot              Whether to plot the training loss at the end.
+            stop                    Loss function value at which to stop training.
+            learning_decay          The amount the learning rate will decay after each epoch.
             learning_rate           if 0.0 then the predefined learning rate will be taken else it will be overwritten.
-            evaluation_function     Evaluation function for evaluating the loss
-            evaluation_kwargs       are passed to the loss function for customized loss approaches.
+            shuffle                 If to shuffle the training set between epochs.
+            evaluation_criterion    Evaluation function for evaluating the loss
             split                   fractional split [.0, 1.] of training set e.g. 0.8 means that 80% of 
-                                    training samples will be used, rest 20% will be used for testing 
+                                    training samples will be used, rest 20% will be used for testing.
+            test_samples            A list of (input, output) tuples -same as samples.
+                                    To pass a persistent training set, without the need of split method.                        
+            epoch_callback          A callback function func(client) which will be called after every epoch.
+                                    The function takes the client as argument.
             '''
 
             _skip_errors = False
@@ -732,7 +741,7 @@ class CNN (Network):
                 
                 # run an epochal callback function
                 if epoch_callback:
-                    epoch_callback()
+                    epoch_callback(self)
                 
                 # collect garbage
                 gc.collect()
@@ -740,6 +749,7 @@ class CNN (Network):
             # testing 
             if test_samples:
                 accuracy = self.test(test_samples, mode='argmax')
+                self.accuracy = accuracy
                 # successes = 0
                 # for s in test_samples:
                 #     # make a maximum likelihood prediction
@@ -768,7 +778,7 @@ class CNN (Network):
 
             # denote fit information in a label
             self.fit_label = fit_information
-            self.accuracy = accuracy
+            
                 
             return fit_information
 
@@ -934,8 +944,6 @@ class CNN (Network):
 
         return accuracy
 
-
-
 class Loader:
 
     '''
@@ -946,12 +954,15 @@ class Loader:
 
         '''
         Loads a pre-trained model from a saved .npz file.
+
+        [Return]
+        A loaded network.
         '''
 
         rohling = CNN()
-        reconstructed = rohling.load(filepath)
+        rohling.load(filepath)
 
-        return reconstructed
+        return rohling
 
     def load_image_data (dirpath: str|Path, suffix: str='', class_string_separator: str='_', separator_index: int=1, 
                          one_hot_encoded: bool=True, normalize: bool=True, color_band: int|None=None, rectify_mixed_background: bool=False, invert: bool=False) -> list[list[np.ndarray, np.ndarray]]:
@@ -967,7 +978,8 @@ class Loader:
 
         Provide suffix e.g. '.png' for correct file type filtering.
 
-        Returns a sample dataset.
+        [Return]
+        Sample dataset list[list[ndarray, ndarray]].
         '''
 
         if type(dirpath) is str:
@@ -1152,7 +1164,7 @@ def fuse (model: Network, float_precision: type=np.float64, save_filepath: str|P
 
 def clone_training (model: Network, samples: list[list[np.ndarray]], clone_number: int=1, batch_size: int=1, epochs: int=1, stop: float=0.0, 
             learning_decay: float=0.0, learning_rate: float=None, shuffle: bool=True, evaluation_criterion: Callable=MeanSquaredError(), 
-            split: float|None=None, epoch_callback: Callable|None=None, loss_weighting: bool=False,
+            split: float|None=None, epoch_callback: Callable|None=None, epochs_warmup: int|None=None, loss_weighting: bool=False,
             init_method:str='random', weight_range: list=[-.1, .1], bias_range: list=[-.1, .1], mean_weight:float=0, var_weight:float=0, mean_bias:float=0, var_bias:float=0):
 
     '''
@@ -1175,7 +1187,59 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
     # for clone_sample in clone_samples:
     #     print(len(clone_sample))
 
-    # 3. Pass a split set to each clone for parallelized training
+    
+    # 3. Alpha Correlation
+    # warmup to correlate the clones
+    if epochs_warmup:
+        print(f'[clone training]: warmup for {epochs_warmup} epochs -> alpha selection ...')
+        for i in range(g):
+
+            # initialize each clone independently
+            clones[i].initialize(init_method, weight_range, bias_range, mean_weight, var_weight, mean_bias, var_bias)
+
+            # wrap the thread in a lambda call
+            training_thread = lambda : clones[i].fit(
+                clone_samples[i],
+                batch_size=batch_size,
+                epochs=epochs_warmup,
+                verbose=False,
+                error_plot=False,
+                stop=stop,
+                learning_decay=learning_decay,
+                learning_rate=learning_rate,
+                shuffle=shuffle,
+                evaluation_criterion=evaluation_criterion,
+                split=split,
+                epoch_callback=epoch_callback
+            )
+
+            # train each clone in a separate thread with one of the splitted samples
+            # (this is a simulation to g separate GPUs)
+            prc = thread(function=training_thread)
+
+            # store and start
+            threads.append(prc)
+            prc.start()
+        
+        # await all threads
+        for t in threads:
+            while not t.finished:
+                sleep(.1)
+        
+        # pick the one with greatest test accuracy
+        alpha = None
+        for clone in clones:
+            if not alpha:
+                alpha = clone
+                continue
+            if clone.accuracy > alpha.accuracy:
+                alpha = clone
+        
+        # all clones become a new clone of the alpha
+        print(f'[clone training]: alpha successfully selected, correlate clones ...')
+        clones = [copy.deepcopy(alpha) for _ in range(g)]
+
+    # 4. Pass a split set to each clone for parallelized training
     print(f'[clone training]: train {g} independent clones over {epochs} epochs, this may take a while ...')
     for i in range(g):
 
@@ -1211,16 +1275,14 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
         while not t.finished:
             sleep(.1)
 
-    
-
-    # 4. Extract weighting from the corresponding losses
+    # 5. Extract weighting from the corresponding losses
     if split and loss_weighting:
         loss_dist = np.array([clone.accuracy for clone in clones])
         loss_weights = activate(loss_dist, model='softmax')
     else:
         loss_weights = np.ones((len(clones),))
 
-    # 5. Merge all weights by sample mean into a new model corpus.
+    # 6. Merge all weights by sample mean into a new model corpus.
     corpus = CNN()
     corpus.sequential(
         model.name,
@@ -1236,6 +1298,8 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
             corpus.tensors[layer] += loss_weights[layer-1] * clone.tensors[layer] / g
             corpus.biases[layer] += loss_weights[layer-1] * clone.biases[layer] / g
     print('merged corpus snip out - ', corpus.tensors[3][0][:3]) 
+
+
     return corpus
 
 def size (tensor: np.ndarray, individual_element_size: bool=False, verbose: bool=False) -> int:

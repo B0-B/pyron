@@ -27,10 +27,11 @@ def testsuite() -> bool:
 
     # define hyperparameters for clone training
     hyperparameters = {
-        'clone_number': 4,
-        'batch_size': 3,
+        'clone_number': 10,
+        'batch_size': 10,
         'epochs': 100,
-        'learning_rate': 0.02,
+        # 'epochs_warmup': 100,
+        'learning_rate': 0.05,
         'split': 0.8,
         'init_method': 'random', 
         'weight_range': [-.1, .1], 
