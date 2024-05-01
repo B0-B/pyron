@@ -391,7 +391,7 @@ class CNN (Network):
     def save (self, filepath: str|Path, compress:bool=True, override:bool=False) -> None:
 
         '''
-        filepath    Absolue path to file or target director , in the ladder case a filename 
+        filepath    Absolue path to file or target directory, in the ladder case a filename 
                     will be generated from model name.
         compress    Saves model in compressed state.
         override    If an old dump with provided filepath exists, it will be overwritten.
@@ -416,7 +416,7 @@ class CNN (Network):
             # check if path is a directory, if so generate a filename
             if filepath.is_dir():
                 filename = filename = self.name + '.npz'
-                filepath.joinpath(filename)
+                filepath = filepath.joinpath(filename)
                 print(f'[save]: provided filepath is a directory, will use model name as file name: "{filename}" ...')
 
             # check for correct file suffix

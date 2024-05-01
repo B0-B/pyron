@@ -3,3 +3,4 @@
 
 # remove notebooks
 tests/HandWrittenDigitsRecognition.ipynb
+dev.ipynb
