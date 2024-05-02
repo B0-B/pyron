@@ -43,11 +43,32 @@ class thread (Thread):
         self.stoprequest.set()
         super(thread, self).join(timeout)
 
-
-# Loss functions implemented as objects
+# Class Objects & Types
+# ======================================== 
 class Criterion:
     pass
 
+class Layer:
+
+    def __init__(self) -> None:
+        pass
+
+class Module:
+
+    def __init__(self) -> None:
+        pass
+
+class Network:
+
+    def __init__(self) -> None:
+        pass
+
+
+# Loss / Target Functions
+# =========================================
+# Every loss function is a criterion and has to provide an evaluate method
+# evaluate(self, xarray:np.ndarray, yarray:np.ndarray, derivative: bool=False)
+# which allows to compute the root and derivative value (w.r.t. x).
 class CrossEntropyLoss (Criterion):
 
     '''
@@ -126,86 +147,9 @@ class MeanSquaredError (Criterion):
         return  ( delta ** 2 ).mean()
 
 
-# perceptron implementation    
-class Network:
 
-    def __init__(self) -> None:
-        pass
-    
-class FusedNetwork (Network):
-
-    '''
-    Fused network type and corpus.
-    '''
-
-    def __init__ (self) -> None:
-
-        super().__init__()
-
-        self.L = None
-        self.w = []
-        self.b = []
-        self.a = []
-
-    def forward (self, _input: np.ndarray) -> np.ndarray:
-
-        '''
-        Simple forward propagation wrapper.
-        '''
-
-        v = _input
-        for l in range(self.L):
-            v = activate(self.w[l] @ v + self.b[l], model=self.a[l+1])
-        return v
-    
-    def load_format_string (format_string_function: str) -> "FusedNetwork":
-
-        '''
-        Loads a functional format_str and evaluates as one fused function.
-        This method is used in the backend of pyron.fuse function.
-
-        Example:
-            format_str = "np.array([1,3,2]) @ _input" <- _input is the input variable
-
-        The function will be held in the object's cache for fast forward propagation.
-        '''
-
-        fn = FusedNetwork()
-        fn.fused_lambda_model = lambda _input: eval( format_string_function )
-
-        return fn
-    
-    def load_from_model (model: Network, float_precision: type=np.float64) -> "FusedNetwork":
-
-        '''
-        Returns a fused version of provided Network-like e.g CNN model.
-        Note: On 64-bit systems float32 will be up to 10 times slower than float64.
-        '''
-
-        fn = FusedNetwork()
-
-        for l in range(1, model.L + 1):
-
-            fn.w.append ( model.tensors[l].astype(float_precision) )
-            fn.b.append( model.biases[l].astype(float_precision) )
-        
-        fn.L = model.L
-        fn.a = model.activation_overlay
-
-        return fn
-
-    def size (self):
-
-        '''
-        Alias of global size method, applied to inner parameters.
-        '''
-
-        s = 0
-        for layer in range(self.L):
-            s += size(self.w[layer]) + size(self.b[layer])
-        
-        return s
-    
+# Convolutional Neural Network (Perceptron)
+# =========================================
 class CNN (Network):
 
     '''
@@ -301,7 +245,7 @@ class CNN (Network):
         for i in range(1, self.L+1):
             self.parameters += ( self.topology[i] * self.topology[i-1] + self.topology[i] )
 
-    def initialize (self, method:str='random', weight_range: list=[-.1, .1], bias_range: list=[-.1, .1], 
+    def initialize (self, method: str='random', weight_range: list=[-.1, .1], bias_range: list=[-.1, .1], 
                     mean_weight:float=0, var_weight:float=0, mean_bias:float=0, var_bias:float=0): # works
 
         '''
@@ -497,6 +441,14 @@ class CNN (Network):
 
         return self.propagate_to_layer(self.L, _input)
 
+    def forward (self, _input: np.ndarray) -> np.ndarray:
+
+        '''
+        Alias for propagate method.
+        '''
+
+        return self.propagate(_input)
+    
     def activate (self, x: np.ndarray|float, derivative: bool=False, model: str='sigmoid') -> np.ndarray|float: # works
 
         # Sigmoid or logistics function
@@ -789,9 +741,11 @@ class CNN (Network):
     def backprop5 (self, x_batch: np.ndarray, y_batch: np.ndarray, evaluation_criterion: Callable=MeanSquaredError()) -> dict:
 
         '''
-        [Working but diverging]
-        Fully parallelized by vectorized calculus.
-        Optimized version of backprop4.
+        Back-propagation algorithm with gradient descent,
+        fully parallelized by vectorized calculus.
+
+        [Return]
+        Dictionary with weights, biases, and loss array.
         '''
 
         # parameters
@@ -859,17 +813,16 @@ class CNN (Network):
             for sample in range(batch_size):
 
                 prior = layers_prior[sample]
-                # weight_change[i][j] = (-1) * self.learning_rate * ( (1 - self.momentum) * ( prior[j] * sigma_prime[sample][i] * delta[sample][i] ) + self.momentum * self.last_weight_change[layer][i][j] )    
+                   
                 
                 # compute derivative of activation function of the weighted sum of layer l
                 sigma_prime = sigma_prime_batch[sample]
 
-                # compute gradient tensor in vectorized way
+                # compute gradient tensor in vectorized way, which is basically:
+                # weight_change[i][j] = (-1) * self.learning_rate * ( (1 - self.momentum) * ( prior[j] * sigma_prime[sample][i] * delta[sample][i] ) + self.momentum * self.last_weight_change[layer][i][j] ) 
                 weight_gradient = (1 - self.momentum) * ( np.outer(prior, sigma_prime) * delta[sample] ).T + self.momentum * self.last_weight_change[layer]
-
-                # print('weight gradient', weight_gradient)
                 
-                # remember the weight change
+                # remember the weight change for next iteration
                 self.last_weight_change[layer] = weight_gradient
 
                 # bias vector is obtained from element-wise multiplication of sigma_prime and delta vector
@@ -944,10 +897,147 @@ class CNN (Network):
 
         return accuracy
 
+# Long Short-term Memory Neural Module
+# =========================================
+class LSTM (Module):
+
+    '''
+    Unrollable LSTM module converged to a layer-like structure.
+    General topology, assuming x is the input and y the output:
+
+                hidden      state
+                   |          | 
+        x_0 ---> |     LSTM     | ---> y_0
+                   |          | 
+        x_1 ---> |     LSTM     | ---> y_1
+                   |          | 
+        x_2 ---> |     LSTM     | ---> y_2
+                         .
+                         .
+                         .
+    
+    x and y form the input (vector received from former layer) 
+    and output (vector passed on to further layers), respectively.
+    '''
+
+    def __init__ (self, state_init_method: str='cold', weight_init_method: str='cold') -> None:
+
+        super().__init__()
+
+
+        '''
+        c_{t-1} -------- x --------------- + -----------------┬----> c_{t}
+                         |                 |                  |
+                         |        ┌------- x                 tanh
+                         |        |        |                  |
+                     sigmoid  sigmoid    tanh    sigmoid ---> x
+                         |        |        |        |         |
+                        wi_1     wi_2    wi_3      wi_4       |
+        h_{t-1} ---- + --┴--------┴--------┴--------┘         └----> h_{t} (y_output)
+                     |
+                  x_input
+        '''
+
+        # current cell and hidden state of the unit
+        if state_init_method in ['random', 'hot']:
+            self.cell = np.random.uniform(-.5, .5)      # long-term state
+            self.hidden = np.random.uniform(-.5, .5)    # short-term memory state
+        else:
+            self.cell = 0         # long-term state
+            self.hidden = 0       # short-term memory state
+
+        # initialize weights and biases
+        if weight_init_method in ['random', 'hot']:
+            # first row: input weights which go into the 4 stages (labeled wi)
+            # second row: short term or "recursive" weights 
+            self.weights = np.random.uniform(-.5, .5, size=(2,4))
+            self.bias = np.random.uniform(-.5, .5, size=(4,))
+        else:
+            self.weights = np.zeros(shape=(2,4))
+            self.bias = np.zeros(shape=(4,))
+        
+    def __call__ (self, _input: np.ndarray) -> np.ndarray:
+
+        '''
+        The LSTM module is callable with unroll method.
+        
+        [Parameters]
+        _input      ndarray
+
+        [Return]
+        Returns ndarray of same shape as _input.
+        '''
+
+        return self.unroll(_input)
+
+    def unroll (self, _input: np.ndarray) -> np.ndarray:
+
+        '''
+        Forward method for arbitrary sequence lengths.
+        Accepts an ndarray "timeseries" of arbitrary shape into unrolled feedback loop, 
+        where the 0-th shape dimension will be interpreted as the input/timeseries index.
+        All further dimenions/indices are attributed to the internal structure
+        of the input data. -> (timeseries_index, *object_dimensions)
+
+        [Parameters]
+        _input      ndarray
+
+        [Return]
+        Returns ndarray of same shape as _input.
+        '''
+
+        # the input elements of the timeseries are aranged along the first dimension
+        output = np.zeros(shape=_input.shape)
+
+        # Unrolled feedback propagation across consecutive stages in time.
+        # I.e. every output neuron in the output layer will depend on the one before.
+        for i in range(_input.shape[0]):
+            output[i], self.cell, self.hidden = self.forward(_input[i], self.cell, self.hidden)
+        
+        return output
+
+    def forward (self, _input: np.ndarray, cell: float, hidden: float) -> tuple[np.ndarray, float, float]:
+
+        '''
+        Forwards a single element x_0 of e.g. a timeseries x.
+        Calling this method has no impact on internal state parameters.
+
+        [Parameters]
+        _input      Single input, e.g. the first element of a timeseries.
+        cell        Input cell value i.e. the most recent cell value.
+        hidden      Recent hidden state value.
+
+        [Return]
+        tuple (_ouput, new cell value, new hidden value)
+        '''
+
+        # intermediate sigmoid values
+        xw = _input * self.weights[0]
+        hr = hidden * self.weights[1]
+
+        # junction of weighted inputs, weighted short mem, and bias
+        sum_xhw_hr_b = xw + hr + self.bias
+
+        # activate in two steps
+        # 1. activate all with sigmoid for performance
+        activated_sums = activate(sum_xhw_hr_b) 
+        # 2. override 3. stage (2nd index) with tanh activation
+        activated_sums[2] = activate(sum_xhw_hr_b[2], model='tanh')
+
+        # compute new states
+        c = cell * activated_sums[0] + activated_sums[1] * activated_sums[2]
+        h = activate(c, model='tanh') * activated_sums[3]
+        # the hidden value is also the output value of the block
+
+        return h, c, h
+
+
+# Toolkit
+# =========================================
 class Loader:
 
     '''
-    Loader module for loading models.
+    Loader module for loading models and data.
     '''
 
     def from_pretrained (filepath: str|Path) -> Network:
@@ -1023,7 +1113,9 @@ class Loader:
         
         return dataset
 
-# ---- global methods ----
+
+# Global Methods 
+# =========================================
 def activate (x: np.ndarray|float, derivative: bool=False, model: str='sigmoid') -> np.ndarray|float: # works
 
     '''
@@ -1042,6 +1134,18 @@ def activate (x: np.ndarray|float, derivative: bool=False, model: str='sigmoid')
             return sig(x) * (1 - sig(x))
 
         return sig(x)
+
+    # Hyperbolic Tangent "tanh"
+    # https://en.wikipedia.org/wiki/Hyperbolic_functions
+    if model == 'tanh':
+        
+        tanh_x = np.tanh(x)
+
+        if derivative:
+
+            return 1 - tanh_x * tanh_x
+
+        return tanh_x
     
     # ReLU activation function
     # https://en.wikipedia.org/wiki/Rectifier_(neural_networks)
@@ -1101,66 +1205,6 @@ def activate (x: np.ndarray|float, derivative: bool=False, model: str='sigmoid')
             return jacobian_m
 
         return dist
-
-def forward_activation_str_wrapper (model: str='relu') -> str:
-
-    if model == 'linear':
-
-        return '{0}'
-    
-    elif model == 'relu':
-
-        return "np.maximum(0, {0})"
-    
-    elif model == 'sigmoid':
-
-        return "1 / ( 1 + np.exp(-{0}) )"
-    
-    elif model == 'softmax':
-
-        return "np.exp({0}) / np.sum(np.exp({0}))"
-
-def fuse (model: Network, float_precision: type=np.float64, save_filepath: str|Path|None=None) -> FusedNetwork:
-
-    '''
-    [Deprecated - failed tests]
-    Fuses a model for performant inference.
-    All layers will be hard-coded 'fused' to one single function for faster propagation.
-    Also the model can be fused at different pecisions for compression. 
-
-    Note: On 64-bit systems float32 will be up to 10 times slower than float64.
-
-    save_filepath       The absolute target filename e.g. /../myfolder/myfilename 
-                        this will create a file -> /../myfolder/myfilename.fuse
-    '''
-
-    # fuse the network weights, biases and activation to a single formula
-    vec = '_input'
-    for layer in range(1, model.L+1):
-        raw_layer_output = f"((np.array({list(model.tensors[layer].astype(float_precision))}) @ {vec}) + np.array({list(model.biases[layer].astype(float_precision))}))"
-        activation_overlay = forward_activation_str_wrapper(model.activation_overlay[layer])
-        activated_layer_output = '(' + activation_overlay.format(raw_layer_output) + ')'
-        vec = activated_layer_output
-
-    # convert objects to correct numpy reference
-    string_formula = vec.replace('float', 'np.float')
-    #print(vec)
-
-    # save the formula string, which at any point can be read and load again into python via eval() function
-    if save_filepath:
-        if save_filepath.is_dir():
-            raise ValueError(f'[error]: save_filepath argument in fuse method must point to a filename not an existing directory!')
-        if save_filepath.suffix != '.fuse':
-            save_filepath.suffix = '.fuse'
-        with open(save_filepath, 'w+') as f:
-            f.write(string_formula)
-        print('[fuse]: saved model.')
-    
-    # create a fused lambda function
-    # fused = lambda _input: eval(string_formula)
-    # print('fused result', fused (np.random.uniform(-1, 1, (model.topology[0],))))
-
-    return FusedNetwork.load_format_string(string_formula)
 
 def clone_training (model: Network, samples: list[list[np.ndarray]], clone_number: int=1, batch_size: int=1, epochs: int=1, stop: float=0.0, 
             learning_decay: float=0.0, learning_rate: float=None, shuffle: bool=True, evaluation_criterion: Callable=MeanSquaredError(), 
@@ -1301,6 +1345,14 @@ def clone_training (model: Network, samples: list[list[np.ndarray]], clone_numbe
 
 
     return corpus
+
+def sample (shape: tuple, max: float=1) -> np.ndarray:
+
+    '''
+    Sample a random ndarray.
+    '''
+
+    return np.random.uniform(-max, max, size=shape)
 
 def size (tensor: np.ndarray, individual_element_size: bool=False, verbose: bool=False) -> int:
 
